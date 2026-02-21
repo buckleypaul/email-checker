@@ -2,7 +2,7 @@ class EmailChecker < Formula
   desc "macOS menu bar app that surfaces important emails via Claude + Gmail MCP"
   homepage "https://github.com/buckleypaul/email-checker"
   url "https://github.com/buckleypaul/email-checker/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "PLACEHOLDER"
+  sha256 "ac5885dc6cf19ea10ae078f42332ef29590d340c3d670814d7db760b8061aff1"
   license "MIT"
 
   depends_on :macos
