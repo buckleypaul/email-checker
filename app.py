@@ -8,7 +8,7 @@ import re
 import subprocess
 import threading
 import webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import rumps
@@ -25,6 +25,14 @@ DEFAULT_PROMPT = SCRIPT_DIR / "prompt.md"
 MAX_EMAILS = 10
 MENU_DISPLAY_LIMIT = 5
 
+# (key, label, timedelta) — "new" uses get_new_emails; others use search_emails
+CHECK_PERIODS = [
+    ("new", "Since last check", None),
+    ("1h",  "Last hour",        timedelta(hours=1)),
+    ("24h", "Last 24 hours",    timedelta(hours=24)),
+    ("7d",  "Last 7 days",      timedelta(days=7)),
+]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -38,6 +46,7 @@ class EmailCheckerApp(rumps.App):
         super().__init__("✉", quit_button=None)
         self.important_emails = []
         self.last_checked = None
+        self.check_period = "new"
         self._check_timer = None
         self._is_checking = False
         self._pending_rebuild = False
@@ -54,6 +63,7 @@ class EmailCheckerApp(rumps.App):
                 self.important_emails = data.get("important_emails", [])
                 last = data.get("last_checked")
                 self.last_checked = datetime.fromisoformat(last) if last else None
+                self.check_period = data.get("check_period", "new")
                 log.info("Loaded %d emails from state", len(self.important_emails))
             except Exception:
                 log.exception("Failed to load state")
@@ -65,6 +75,7 @@ class EmailCheckerApp(rumps.App):
                     {
                         "important_emails": self.important_emails,
                         "last_checked": self.last_checked.isoformat() if self.last_checked else None,
+                        "check_period": self.check_period,
                     },
                     indent=2,
                 )
@@ -117,18 +128,37 @@ class EmailCheckerApp(rumps.App):
 
         prompt_path = PROMPT_FILE if PROMPT_FILE.exists() else DEFAULT_PROMPT
         try:
-            prompt = prompt_path.read_text()
+            base_prompt = prompt_path.read_text()
         except Exception:
             log.exception("Could not read prompt.md")
             self._is_checking = False
             self._pending_rebuild = True
             return
 
+        # Build period-aware prompt and tool selection
+        period_entry = next(p for p in CHECK_PERIODS if p[0] == self.check_period)
+        _, period_label, period_delta = period_entry
+
+        if period_delta is None:
+            allowed_tools = "mcp__gmail__get_new_emails"
+            prompt = base_prompt
+        else:
+            allowed_tools = "mcp__gmail__search_emails"
+            cutoff = datetime.now() - period_delta
+            after_date = cutoff.strftime("%Y/%m/%d")
+            cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M")
+            prompt = (
+                f"Use the search_emails tool with query 'after:{after_date}' to find emails. "
+                f"Focus only on emails received since {cutoff_str} ({period_label}).\n\n"
+                + base_prompt
+            )
+            log.info("Period check: %s (after %s)", period_label, cutoff_str)
+
         cmd = [
             "claude",
             "-p",
             "--mcp-config", str(MCP_CONFIG),
-            "--allowedTools", "mcp__gmail__get_new_emails",
+            "--allowedTools", allowed_tools,
             "--output-format", "json",
             "--dangerously-skip-permissions",
             prompt,
@@ -166,7 +196,11 @@ class EmailCheckerApp(rumps.App):
 
         self.last_checked = datetime.now(tz=timezone.utc)
         self._notify_new_emails(emails)
-        self.important_emails = (emails + self.important_emails)[:MAX_EMAILS]
+        if self.check_period == "new":
+            self.important_emails = (emails + self.important_emails)[:MAX_EMAILS]
+        else:
+            # Period-based check: replace the list entirely
+            self.important_emails = emails[:MAX_EMAILS]
         self._save_state()
         log.info("Check complete — %d important email(s) returned", len(emails))
         self._is_checking = False
@@ -252,6 +286,14 @@ class EmailCheckerApp(rumps.App):
         run_now = rumps.MenuItem("Run Now", callback=self._on_run_now)
         items.append(run_now)
 
+        # Check period submenu
+        period_menu = rumps.MenuItem("Check period")
+        for key, label, _ in CHECK_PERIODS:
+            prefix = "✓ " if key == self.check_period else "    "
+            item = rumps.MenuItem(prefix + label, callback=self._make_period_callback(key))
+            period_menu.add(item)
+        items.append(period_menu)
+
         # Last checked
         last_checked_label = self._last_checked_label()
         last_item = rumps.MenuItem(last_checked_label)
@@ -281,6 +323,13 @@ class EmailCheckerApp(rumps.App):
             return "Last checked: 1m ago"
         else:
             return f"Last checked: {minutes}m ago"
+
+    def _make_period_callback(self, key):
+        def callback(_):
+            self.check_period = key
+            self._save_state()
+            self._pending_rebuild = True
+        return callback
 
     def _make_open_callback(self, email_id):
         def callback(_):
