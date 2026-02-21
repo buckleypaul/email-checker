@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.log
+state.json
+launchd-stdout.log
+launchd-stderr.log
+mcp_config.json
