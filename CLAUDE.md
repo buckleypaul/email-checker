@@ -33,6 +33,26 @@ cp mcp_config.json.example ~/.config/email-checker/mcp_config.json
 venv/bin/python3 app.py
 ```
 
+## Common commands
+
+```sh
+# Restart after editing app.py
+launchctl unload ~/Library/LaunchAgents/com.paulbuckley.email-checker.plist && \
+launchctl load ~/Library/LaunchAgents/com.paulbuckley.email-checker.plist
+
+# Watch logs
+tail -f ~/.config/email-checker/email-checker.log
+```
+
+## Gotchas
+
+**Full Disk Access required** — the app runs as a launchd agent and spawns `claude` and `node` as subprocesses. Without Full Disk Access for the venv Python binary, macOS blocks folder access and checks time out silently. Grant it in: System Settings → Privacy & Security → Full Disk Access.
+
+**`mcp_config.json` is gitignored** — must be created from the example after cloning:
+```sh
+cp mcp_config.json.example ~/.config/email-checker/mcp_config.json
+```
+
 ## Architecture
 
 - `app.py` — `rumps`-based menu bar app; scheduling via `threading.Timer`, UI updates via `@rumps.timer(1)` on main thread
